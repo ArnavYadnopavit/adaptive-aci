@@ -1,10 +1,10 @@
 function Generic_Comm_Sim_With_Plot()
 
     % --- System Parameters ---
-    modScheme  = adaptive_controller([], 'history', true);   % 'BPSK', 'QPSK', '16-QAM', '64-QAM'#CHANGE
+    modScheme  = adaptive_controller([], 'goodput_probe', true);   % 'BPSK', 'QPSK', '16-QAM', '64-QAM'#CHANGE
     % method = 'immediate', 'threshold', 'per_modulation',
     %          'history', 'window', 'aimd', 'score', or 'goodput_probe'
-    numBlocks  = 160;
+    numBlocks  = 400;
     numSymbols = 12;
     fc = 2.4e9;   % Carrier frequency
     Fs = 50e9;    % Sampling frequency
@@ -14,7 +14,7 @@ function Generic_Comm_Sim_With_Plot()
     interference_type = 'ratioed';
     ratio = [10 20]; %consecutive blocks without aci to aci ratio
     max_power = 0.05 ;
-    freq_seperation = 1.25e6/2; 
+    freq_seperation = 1.25e3/2; 
     adjacentCenter = fc + freq_seperation;
 
     maxDutyCycle = 0.40;       %maximum fraction of blocks with ACI
@@ -186,6 +186,7 @@ function Generic_Comm_Sim_With_Plot()
     fprintf('------------------------------\n');
     nackHistory = false(numBlocks, 1);
     ackHistory = false(numBlocks, 1);  % ACK/NACK outcome for each block
+    aciHistory = zeros(1, numBlocks);
 
     for b = 1:numBlocks
 
@@ -412,7 +413,7 @@ case 'ratioed'
         else
             status = 'NACK';
         end
-        modScheme = adaptive_controller(isAck, 'history', false); %#CHANGE
+        modScheme = adaptive_controller(isAck, 'goodput_probe', false); %#CHANGE
 
 
         fprintf('%d\t\t%d\t\t%s\n', ...
@@ -468,6 +469,7 @@ case 'ratioed'
             break;
         end
         %}
+        aciHistory(b) = aciEnabled;
 
     end
     %% FINAL GOODPUT CALCULATION
@@ -526,7 +528,27 @@ case 'ratioed'
 
     xlabel('Block Number');
     ylabel('Modulation Scheme');
-    title('Adaptive Modulation with ACK/NACK Feedback');
+    % Right axis: ACI status
+yyaxis right
+stairs(1:completedBlocks, aciHistory(1:completedBlocks), ...
+       'k-', 'LineWidth', 1.8);
+
+ylim([-0.1 1.1]);
+yticks([0 1]);
+yticklabels({'ACI OFF', 'ACI ON'});
+ylabel('ACI Status');
+
+grid on;
+xlim([1 max(2, completedBlocks)]);
+
+xlabel('Block Number');
+title('Adaptive Modulation with ACK/NACK and ACI');
+
+legend('Modulation used', 'NACK', 'ACI Status', ...
+       'Location', 'best');
+
+set(gca, 'FontSize', 11);
+hold off;
 
     legend('Modulation used', 'NACK', ...
         'Location', 'best');
@@ -718,6 +740,7 @@ persistent blockCount lastSwitch
 persistent aimdScore
 
 persistent modHistory modObs probeCycle historyLocked
+persistent bestModIdx
 persistent holdRemaining
 persistent scoreValue
 
@@ -757,6 +780,7 @@ if isempty(idx) || reset
     for k = 1:4
         modHistory{k} = zeros(1,0);  % Initially no observations
     end
+    bestModIdx = 3;
 
     probeCycle = 0;       % 1 -> 16-QAM, 2 -> QPSK, 3 -> BPSK
     historyLocked = false;
@@ -788,6 +812,7 @@ nLevels = [1 1 1 1];
 % Algorithm 4: history-based inference and learning
 historyWindow = 5;   % Observations required per modulation
 holdDuration = 5;    % Blocks to use selected modulation after 64-QAM NACK
+
 
 % Algorithm 5: sliding-window hysteresis
 Wwindow = 5;
@@ -889,8 +914,9 @@ switch lower(method)
             nackCount = 0;
         end
 
-   %--------------------------------------------------------------
-% Algorithm 4: Cyclic exploration, then history-based selection
+   
+%--------------------------------------------------------------
+% Algorithm 4: Cyclic exploration, then fixed best-mod selection
 %--------------------------------------------------------------
 case 'history'
 
@@ -905,13 +931,33 @@ case 'history'
 
     modObs(usedIdx) = min(modObs(usedIdx) + 1, historyWindow);
 
-    % Lock only when every modulation has enough real observations.
-    if all(modObs >= historyWindow)
+    %----------------------------------------------------------
+    % Lock once every modulation has enough observations.
+    % Select the best LOWER modulation only once.
+    %----------------------------------------------------------
+    if ~historyLocked && all(modObs >= historyWindow)
+
+        candidates = [3 2 1];  % 16-QAM, QPSK, BPSK
+        goodput = zeros(1, numel(candidates));
+
+        for k = 1:numel(candidates)
+            s = candidates(k);
+            ackRatio = mean(modHistory{s});
+            goodput(k) = rates(s) * ackRatio;
+        end
+
+        [~, bestPos] = max(goodput);
+        bestModIdx = candidates(bestPos);
+
         historyLocked = true;
+
+        fprintf(['History locked at block %d. Best modulation: %s, ' ...
+                 'estimated goodput: %.3f\n'], ...
+                 blockCount, schemes{bestModIdx}, goodput(bestPos));
     end
 
     %----------------------------------------------------------
-    % Phase 1: Cyclic exploration
+    % Phase 1: Cyclic exploration (UNCHANGED)
     %----------------------------------------------------------
     if ~historyLocked
 
@@ -935,50 +981,40 @@ case 'history'
         end
 
     %----------------------------------------------------------
-    % Phase 2: Locked history-based selection
+    % Phase 2: Locked operation using fixed best modulation
     %----------------------------------------------------------
     else
 
         if usedIdx == 4 && ack == 0
 
-            % Choose the best-performing LOWER modulation.
-            % 64-QAM is excluded because it just produced a NACK.
-            candidates = [3 2 1];  % 64-QAM, QPSK, BPSK
-            goodput = zeros(1, numel(candidates));
-            
-            for k = 1:numel(candidates)
-                s = candidates(k);
-                ackRatio = mean(modHistory{s});
-                goodput(k) = rates(s) * ackRatio;
-            end
-            
-            [~, bestPos] = max(goodput);
-            idx = candidates(bestPos);
+            % 64-QAM NACK: use the fixed selected modulation.
+            % Do not recalculate goodput or inspect history.
+            idx = bestModIdx;
 
-            % Use the selected modulation for holdDuration blocks,
-            % including the first block immediately after this NACK.
+            % The immediate next block counts as block 1.
             holdRemaining = holdDuration - 1;
 
         elseif usedIdx ~= 4 && holdRemaining > 0
 
-            % Continue the selected modulation for the hold period.
+            % Continue using the same selected modulation.
             holdRemaining = holdRemaining - 1;
 
             if holdRemaining == 0
                 idx = 4;
             else
-                idx = usedIdx;
+                idx = bestModIdx;
             end
 
         else
 
-            % Otherwise, operate at 64-QAM.
+            % Normal operation: use 64-QAM.
             idx = 4;
             holdRemaining = 0;
 
         end
     end
-    %--------------------------------------------------------------
+
+%--------------------------------------------------------------
     % Algorithm 5: Sliding-window ACK ratio with hysteresis
     %--------------------------------------------------------------
     case 'window'
