@@ -11,12 +11,12 @@ function Comm_Sys_Baseband()
     numSymbols = 100;
 
     Rs        = 10e6;        % Symbol rate (10 MBaud)
-    Bandwidth = 15e6;        % Target RF Bandwidth (15 MHz)
-    sps       = 20;          % INCREASED sps to 16 (prevents aliasing/clipping)
+    Bandwidth = 18e6;        % Target RF Bandwidth (15 MHz)
+    sps       = 16;          % INCREASED sps to 16
     Fs        = Rs * sps;    % Baseband Sampling Frequency (160 MHz)
 
     % ACI parameters
-    max_power       = 0.25;   % ACI/desired power ratio
+    max_power       = 0.5;   % ACI/desired power ratio
     freq_separation = 15e6;  % Adjacent carrier separation = 15 MHz
 
     % Amplifier parameters
@@ -60,13 +60,13 @@ function Comm_Sys_Baseband()
     hScatter = plot(ax, NaN, NaN, 'b.', 'MarkerSize', 8, 'DisplayName', 'Received');
     legend(ax, 'Location', 'best');
 
-    % Initialize accumulators for PSD averaging
+    % Initialize accumulators
     txAmp_noACI_all = [];
     txAmp_withACI_all = [];
     rxNL_noACI_all = [];
     rxNL_withACI_all = [];
     
-    current_time = 0; % Track continuous time for ACI carrier
+    current_time = 0; 
 
     % =========================================================
     % 5. SIMULATION LOOP
@@ -76,20 +76,14 @@ function Comm_Sys_Baseband()
     fprintf('------------------------------\\n');
 
     for b = 1:numBlocks
-        % -----------------------------------------------------
-        % TRANSMITTER: DESIRED SIGNAL (Baseband)
-        % -----------------------------------------------------
         txBits = randi([0 1], blockSize, 1);
         txSyms = encoder(txBits, modScheme, M);
 
         txWaveform = upfirdn(txSyms, hRRC, sps);
-        txWaveform = txWaveform(:); % Complex baseband signal
+        txWaveform = txWaveform(:); 
 
         txBB = txWaveform;
 
-        % -----------------------------------------------------
-        % GENERATE ACI
-        % -----------------------------------------------------
         aciBits = randi([0 1], blockSize, 1);
         aciSyms = encoder(aciBits, modScheme, M);
 
@@ -100,61 +94,39 @@ function Comm_Sys_Baseband()
         txBB = txBB(1:L);
         aciWaveform = aciWaveform(1:L);
         
-        % Create continuous time vector to avoid phase discontinuity splatter
         t = current_time + (0:L-1)' / Fs;
         current_time = current_time + L / Fs;
 
-        % Shift ACI to +15 MHz natively in complex baseband
         aciBBraw = aciWaveform .* exp(1j * 2 * pi * freq_separation * t);
 
         desiredPower = mean(abs(txBB).^2);
         rawAciPower  = mean(abs(aciBBraw).^2);
 
-        % Scale ACI
         aciBB = sqrt(max_power * desiredPower / max(rawAciPower, eps)) * aciBBraw;
 
         txBB_noACI   = txBB;
         txBB_withACI = txBB + aciBB;
 
-        % -----------------------------------------------------
-        % TRANSMITTER AMPLIFIER
-        % -----------------------------------------------------
         txAmp_noACI   = ampGain_Tx * txBB_noACI;
         txAmp_withACI = ampGain_Tx * txBB_withACI;
         
-        % Accumulate signals for smooth PSD calculation at the end
         txAmp_noACI_all   = [txAmp_noACI_all; txAmp_noACI];
         txAmp_withACI_all = [txAmp_withACI_all; txAmp_withACI];
 
-        % -----------------------------------------------------
-        % CHANNEL
-        % -----------------------------------------------------
-        % Complex Gaussian noise
         noise = sqrt(noiseVar/2) * (randn(size(txAmp_noACI)) + 1j*randn(size(txAmp_noACI)));
 
         rx_noACI   = channelGain * txAmp_noACI + noise;
         rx_withACI = channelGain * txAmp_withACI + noise;
 
-        % -----------------------------------------------------
-        % LINEAR RECEIVER AMPLIFIER
-        % -----------------------------------------------------
         rxLinear_noACI   = ampGain_Rx_linear * rx_noACI;
         rxLinear_withACI = ampGain_Rx_linear * rx_withACI;
 
-        % -----------------------------------------------------
-        % NONLINEAR AMPLIFIER (Baseband Equivalent)
-        % -----------------------------------------------------
-        % Baseband cubic model: y = a1*x + (3/4)*a3*|x|^2*x
         rxNL_noACI   = a1 * rxLinear_noACI + (3/4) * a3 * (abs(rxLinear_noACI).^2) .* rxLinear_noACI;
         rxNL_withACI = a1 * rxLinear_withACI + (3/4) * a3 * (abs(rxLinear_withACI).^2) .* rxLinear_withACI;
         
-        % Accumulate signals for smooth PSD calculation
         rxNL_noACI_all   = [rxNL_noACI_all; rxNL_noACI];
         rxNL_withACI_all = [rxNL_withACI_all; rxNL_withACI];
 
-        % -----------------------------------------------------
-        % DEMODULATION
-        % -----------------------------------------------------
         rxBaseband = rxNL_withACI;
         rxFiltered = upfirdn(rxBaseband, hRRC, 1, sps);
 
@@ -175,16 +147,15 @@ function Comm_Sys_Baseband()
             status = 'NACK';
         end
 
-        fprintf('%d\\t\\t%d\\t\\t%s\\n', b, numErrors, status);
+        fprintf('%d \t \t %d \t \t%s \n', b, numErrors, status);
 
         set(hScatter, 'XData', real(rxSyms), 'YData', imag(rxSyms));
         title(ax, sprintf('%s | Block %d/%d | Errors = %d | %s', modScheme, b, numBlocks, numErrors, status));
         drawnow;
     end
     
-    % Plot accumulated smooth PSDs at the end
-    plot_signal_psd_comparison(txAmp_noACI_all, txAmp_withACI_all, Fs, '1. Transmitted Baseband PSD');
-    plot_signal_psd_comparison(rxNL_noACI_all, rxNL_withACI_all, Fs, '2. Received PSD: Nonlinear Path');
+    plot_signal_power_comparison(txAmp_noACI_all, txAmp_withACI_all, Fs, '1. Transmitted Baseband Power');
+    plot_signal_power_comparison(rxNL_noACI_all, rxNL_withACI_all, Fs, '2. Received Power: Nonlinear Path');
 end
 
 function syms = encoder(bits, modScheme, M)
@@ -206,35 +177,33 @@ function [isAck, errors] = generate_ack_nack(txBits, rxBits)
     isAck = (errors == 0);
 end
 
-function plot_signal_psd_comparison(sigNoACI, sigWithACI, Fs, plotTitle)
+function plot_signal_power_comparison(sigNoACI, sigWithACI, Fs, plotTitle)
     sigNoACI   = sigNoACI(:);
     sigWithACI = sigWithACI(:);
 
-    windowLength = 2048; % Provides robust averaging for a smooth trace
+    windowLength = 2048; 
     win          = hann(windowLength, 'periodic');
     noverlap     = floor(windowLength / 2);
     nfft         = 4096;
 
-    [P1, f] = pwelch(sigNoACI, win, noverlap, nfft, Fs, 'centered');
-    [P2, ~] = pwelch(sigWithACI, win, noverlap, nfft, Fs, 'centered');
+    % Use 'power' to get Power Spectrum (Watts) instead of PSD (Watts/Hz)
+    [P1, f] = pwelch(sigNoACI, win, noverlap, nfft, Fs, 'centered', 'power');
+    [P2, ~] = pwelch(sigWithACI, win, noverlap, nfft, Fs, 'centered', 'power');
 
-    R = 50;
-    P1_dBmHz = 10 * log10((P1 / R) + eps) + 30;
-    P2_dBmHz = 10 * log10((P2 / R) + eps) + 30;
+    R = 1;
+    P1_dBm = 10 * log10((P1 / R) + eps) + 30;
+    P2_dBm = 10 * log10((P2 / R) + eps) + 30;
 
     figure('Color', 'w', 'Name', plotTitle);
-    h1 = plot(f/1e6, P1_dBmHz, 'LineWidth', 1.5);
+    h1 = plot(f/1e6, P1_dBm, 'LineWidth', 1.5);
     hold on;
-    h2 = plot(f/1e6, P2_dBmHz, 'LineWidth', 1.5);
+    h2 = plot(f/1e6, P2_dBm, 'LineWidth', 1.5);
 
     xlabel('Baseband Frequency (MHz)');
-    ylabel('PSD (dBm/Hz)');
+    ylabel('Power (dBm)');
     title(plotTitle);
     legend([h1, h2], {'Without ACI', 'With ACI'}, 'Location', 'best');
     grid on;
     set(gca, 'FontSize', 11);
-    
-    % Note: axis is not clipped manually; it naturally spans [-Fs/2, Fs/2]
-    
     hold off;
 end
