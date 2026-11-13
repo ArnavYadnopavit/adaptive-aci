@@ -1,0 +1,1013 @@
+
+function Baseband_randomstr_with_aci()
+
+
+    %SYSTEM PARAMETERS
+       modulationSchemes = {'BPSK', 'QPSK', '16-QAM', '64-QAM'};
+    adaptiveSchemes = {'Immediate', 'History', 'Q-learning'};
+
+    numBlocks = 1000;
+    numSymbols = 12;
+
+    % Baseline values
+    baseACIpower = 0.1;
+    baseFreqSeparation = 9e6;
+    baseNoiseVar = 1e-2;
+
+    %=========================================================
+    %                    SWEEP VALUES
+    %=========================================================
+
+    % Experiment 1: ACI power
+    aciPowerValues = sort(unique([ ...
+        linspace(0.001, 2, 50), baseACIpower]));
+
+    % Experiment 2: Frequency separation
+    freqSeparationValues = sort(unique([ ...
+        linspace(0, 18, 50)*1e6, baseFreqSeparation]));
+
+    % Experiment 3: Noise variance
+    noiseVarValues = sort(unique([ ...
+        logspace(-14, log10(2), 50), baseNoiseVar]));
+
+    %=========================================================
+    %                 BASEBAND PARAMETERS
+    %=========================================================
+
+    Rs = 10e6;
+    Bandwidth = 18e6;
+    sps = 16;
+    Fs = Rs * sps;
+
+    span = 6;
+    rolloff = (Bandwidth / Rs) - 1;
+
+    hRRC = rcosdesign(rolloff, span, sps, 'sqrt');
+    hRRC = hRRC / norm(hRRC);
+
+    %=========================================================
+    %                    AMPLIFIERS
+    %=========================================================
+
+    ampGain_Tx = 2;
+    ampGain_Rx_linear = 1;
+    ampGain_Rx_non_linear = 0.15;
+
+    a1 = 1;
+    channelGain = 0.5;
+
+    %=========================================================
+    %                INITIALIZE RESULT ARRAYS
+    %=========================================================
+
+    numSchemes = length(modulationSchemes);
+    numAdaptive = length(adaptiveSchemes);
+
+    GOODPUT_ACI = zeros(numSchemes, length(aciPowerValues));
+    GOODPUT_FREQ = zeros(numSchemes, length(freqSeparationValues));
+    GOODPUT_NOISE = zeros(numSchemes, length(noiseVarValues));
+
+    ADAPTIVE_ACI = zeros(numAdaptive, length(aciPowerValues));
+    ADAPTIVE_FREQ = zeros(numAdaptive, length(freqSeparationValues));
+    ADAPTIVE_NOISE = zeros(numAdaptive, length(noiseVarValues));
+
+    %=========================================================
+    %             EXPERIMENT 1: ACI POWER SWEEP
+    %=========================================================
+
+    fprintf('\n============================================\n');
+    fprintf('          EXPERIMENT 1: ACI POWER\n');
+    fprintf('============================================\n');
+
+    fprintf('Fixed frequency separation = %.1f MHz\n', ...
+        baseFreqSeparation/1e6);
+    fprintf('Fixed noise variance = %.2e\n', baseNoiseVar);
+
+    %---------------------------------------------------------
+    % Fixed modulation schemes
+    %---------------------------------------------------------
+
+    for m = 1:numSchemes
+
+        modScheme = modulationSchemes{m};
+
+        fprintf('\nFixed Modulation: %s\n', modScheme);
+
+        for p = 1:length(aciPowerValues)
+
+            max_power = aciPowerValues(p);
+
+            [GOODPUT_ACI(m,p), totalACK, totalNACK] = simulateFixedCondition( ...
+                modScheme, numBlocks, numSymbols, ...
+                max_power, baseFreqSeparation, baseNoiseVar, ...
+                Fs, sps, span, hRRC, ...
+                ampGain_Tx, ampGain_Rx_linear, ...
+                ampGain_Rx_non_linear, a1, channelGain);
+
+            fprintf(['ACI Power = %.4f | Goodput = %.4f | ' ...
+                'ACK = %d | NACK = %d\n'], ...
+                max_power, GOODPUT_ACI(m,p), totalACK, totalNACK);
+
+        end
+    end
+
+    %---------------------------------------------------------
+    % Adaptive modulation schemes
+    %---------------------------------------------------------
+
+    for a = 1:numAdaptive
+
+        algorithm = adaptiveSchemes{a};
+
+        fprintf('\nAdaptive Algorithm: %s\n', algorithm);
+
+        for p = 1:length(aciPowerValues)
+
+            max_power = aciPowerValues(p);
+
+            ADAPTIVE_ACI(a,p) = simulateAdaptiveCondition( ...
+                algorithm, numBlocks, numSymbols, ...
+                max_power, baseFreqSeparation, baseNoiseVar, ...
+                Fs, sps, span, hRRC, ...
+                ampGain_Tx, ampGain_Rx_linear, ...
+                ampGain_Rx_non_linear, a1, channelGain);
+
+            fprintf('ACI Power = %.4f | Goodput = %.4f\n', ...
+                max_power, ADAPTIVE_ACI(a,p));
+
+        end
+    end
+
+    %=========================================================
+    %          EXPERIMENT 2: FREQUENCY SEPARATION
+    %=========================================================
+
+    fprintf('\n============================================\n');
+    fprintf('       EXPERIMENT 2: FREQUENCY SEPARATION\n');
+    fprintf('============================================\n');
+
+    fprintf('Fixed ACI power = %.2f\n', baseACIpower);
+    fprintf('Fixed noise variance = %.2e\n', baseNoiseVar);
+
+    %---------------------------------------------------------
+    % Fixed modulation schemes
+    %---------------------------------------------------------
+
+    for m = 1:numSchemes
+
+        modScheme = modulationSchemes{m};
+
+        fprintf('\nFixed Modulation: %s\n', modScheme);
+
+        for p = 1:length(freqSeparationValues)
+
+            freq_separation = freqSeparationValues(p);
+
+            [GOODPUT_FREQ(m,p), totalACK, totalNACK] = simulateFixedCondition( ...
+                modScheme, numBlocks, numSymbols, ...
+                baseACIpower, freq_separation, baseNoiseVar, ...
+                Fs, sps, span, hRRC, ...
+                ampGain_Tx, ampGain_Rx_linear, ...
+                ampGain_Rx_non_linear, a1, channelGain);
+
+            fprintf(['Separation = %.2f MHz | Goodput = %.4f | ' ...
+                'ACK = %d | NACK = %d\n'], ...
+                freq_separation/1e6, GOODPUT_FREQ(m,p), ...
+                totalACK, totalNACK);
+
+        end
+    end
+
+    %---------------------------------------------------------
+    % Adaptive modulation schemes
+    %---------------------------------------------------------
+
+    for a = 1:numAdaptive
+
+        algorithm = adaptiveSchemes{a};
+
+        fprintf('\nAdaptive Algorithm: %s\n', algorithm);
+
+        for p = 1:length(freqSeparationValues)
+
+            freq_separation = freqSeparationValues(p);
+
+            ADAPTIVE_FREQ(a,p) = simulateAdaptiveCondition( ...
+                algorithm, numBlocks, numSymbols, ...
+                baseACIpower, freq_separation, baseNoiseVar, ...
+                Fs, sps, span, hRRC, ...
+                ampGain_Tx, ampGain_Rx_linear, ...
+                ampGain_Rx_non_linear, a1, channelGain);
+
+            fprintf('Separation = %.2f MHz | Goodput = %.4f\n', ...
+                freq_separation/1e6, ADAPTIVE_FREQ(a,p));
+
+        end
+    end
+
+    %=========================================================
+    %             EXPERIMENT 3: NOISE VARIANCE
+    %=========================================================
+
+    fprintf('\n============================================\n');
+    fprintf('          EXPERIMENT 3: NOISE VARIANCE\n');
+    fprintf('============================================\n');
+
+    fprintf('Fixed ACI power = %.2f\n', baseACIpower);
+    fprintf('Fixed frequency separation = %.1f MHz\n', ...
+        baseFreqSeparation/1e6);
+
+    %---------------------------------------------------------
+    % Fixed modulation schemes
+    %---------------------------------------------------------
+
+    for m = 1:numSchemes
+
+        modScheme = modulationSchemes{m};
+
+        fprintf('\nFixed Modulation: %s\n', modScheme);
+
+        for p = 1:length(noiseVarValues)
+
+            noiseVar = noiseVarValues(p);
+
+            [GOODPUT_NOISE(m,p), totalACK, totalNACK] = simulateFixedCondition( ...
+                modScheme, numBlocks, numSymbols, ...
+                baseACIpower, baseFreqSeparation, noiseVar, ...
+                Fs, sps, span, hRRC, ...
+                ampGain_Tx, ampGain_Rx_linear, ...
+                ampGain_Rx_non_linear, a1, channelGain);
+
+            fprintf(['Noise variance = %.2e | Goodput = %.4f | ' ...
+                'ACK = %d | NACK = %d\n'], ...
+                noiseVar, GOODPUT_NOISE(m,p), totalACK, totalNACK);
+
+        end
+    end
+
+    %---------------------------------------------------------
+    % Adaptive modulation schemes
+    %---------------------------------------------------------
+
+    for a = 1:numAdaptive
+
+        algorithm = adaptiveSchemes{a};
+
+        fprintf('\nAdaptive Algorithm: %s\n', algorithm);
+
+        for p = 1:length(noiseVarValues)
+
+            noiseVar = noiseVarValues(p);
+
+            ADAPTIVE_NOISE(a,p) = simulateAdaptiveCondition( ...
+                algorithm, numBlocks, numSymbols, ...
+                baseACIpower, baseFreqSeparation, noiseVar, ...
+                Fs, sps, span, hRRC, ...
+                ampGain_Tx, ampGain_Rx_linear, ...
+                ampGain_Rx_non_linear, a1, channelGain);
+
+            fprintf('Noise variance = %.2e | Goodput = %.4f\n', ...
+                noiseVar, ADAPTIVE_NOISE(a,p));
+
+        end
+    end
+
+    %=========================================================
+    %       ADAPTIVE MODULATION SCHEME VARIATION
+    %=========================================================
+
+    fprintf('\n============================================\n');
+    fprintf('       ADAPTIVE MODULATION HISTORY\n');
+    fprintf('============================================\n');
+
+    SCHEME_HISTORY = zeros(numAdaptive, numBlocks);
+
+    for a = 1:numAdaptive
+
+        algorithm = adaptiveSchemes{a};
+
+        % Reset random generator for repeatable history runs
+        rng(100 + a);
+
+        [~, SCHEME_HISTORY(a,:)] = simulateAdaptiveCondition( ...
+            algorithm, numBlocks, numSymbols, ...
+            baseACIpower, baseFreqSeparation, baseNoiseVar, ...
+            Fs, sps, span, hRRC, ...
+            ampGain_Tx, ampGain_Rx_linear, ...
+            ampGain_Rx_non_linear, a1, channelGain);
+
+    end
+
+    %=========================================================
+    %                     PLOT SETTINGS
+    %=========================================================
+
+    allSchemes = { ...
+        'BPSK', 'QPSK', '16-QAM', '64-QAM', ...
+        'Immediate', 'History', 'Q-learning'};
+
+    allColors = {
+        [0.00 0.45 0.74];   % BPSK
+        [0.85 0.33 0.10];   % QPSK
+        [0.47 0.67 0.19];   % 16-QAM
+        [0.49 0.18 0.56];   % 64-QAM
+        [0.30 0.75 0.93];   % Immediate
+        [0.93 0.69 0.13];   % History
+        [0.64 0.08 0.18]    % Q-learning
+    };
+
+    allMarkers = {'o', 's', '^', 'd', 'v', '>', '<'};
+
+    % Combine fixed and adaptive results
+    ALL_GOODPUT_ACI = [GOODPUT_ACI; ADAPTIVE_ACI];
+    ALL_GOODPUT_FREQ = [GOODPUT_FREQ; ADAPTIVE_FREQ];
+    ALL_GOODPUT_NOISE = [GOODPUT_NOISE; ADAPTIVE_NOISE];
+
+    %=========================================================
+    % PLOT 1: GOODPUT VS ACI POWER - ALL 7 CURVES
+    %=========================================================
+
+    figure('Name', 'Goodput vs ACI Power - All Schemes', ...
+        'Color', 'w');
+
+    hold on;
+
+    for m = 1:7
+
+        plot(aciPowerValues, ALL_GOODPUT_ACI(m,:), ...
+            'LineStyle', '-', ...
+            'Marker', allMarkers{m}, ...
+            'Color', allColors{m}, ...
+            'LineWidth', 1.5, ...
+            'MarkerSize', 5);
+
+    end
+
+    hold off;
+    grid on;
+
+    xlabel('ACI Power Ratio');
+    ylabel('Goodput');
+    title('Goodput vs ACI Power - Fixed and Adaptive Modulation');
+
+    legend(allSchemes, 'Location', 'best');
+
+    ylim([0 1]);
+    xlim([min(aciPowerValues) max(aciPowerValues)]);
+
+    subtitle(sprintf(['Fixed frequency separation = %.1f MHz | ' ...
+        'Fixed noise variance = %.2e'], ...
+        baseFreqSeparation/1e6, baseNoiseVar));
+
+    saveas(gcf, 'Exp1_Goodput_vs_ACI_Power_All_7_Schemes.png');
+
+    %=========================================================
+    % PLOT 2: GOODPUT VS FREQUENCY
+    %=========================================================
+
+    figure('Name', 'Goodput vs Frequency - All Schemes', ...
+        'Color', 'w');
+
+    hold on;
+
+    for m = 1:7
+
+        plot(freqSeparationValues/1e6, ALL_GOODPUT_FREQ(m,:), ...
+            'LineStyle', '-', ...
+            'Marker', allMarkers{m}, ...
+            'Color', allColors{m}, ...
+            'LineWidth', 1.5, ...
+            'MarkerSize', 5);
+
+    end
+
+    hold off;
+    grid on;
+
+    xlabel('Frequency Separation (MHz)');
+    ylabel('Goodput');
+    title('Goodput vs Frequency Separation - Fixed and Adaptive Modulation');
+
+    legend(allSchemes, 'Location', 'best');
+
+    ylim([0 1]);
+    xlim([min(freqSeparationValues)/1e6 ...
+        max(freqSeparationValues)/1e6]);
+    xticks(0:10:100);
+
+    subtitle(sprintf(['Fixed ACI power = %.2f | ' ...
+        'Fixed noise variance = %.2e'], ...
+        baseACIpower, baseNoiseVar));
+
+    saveas(gcf, 'Exp2_Goodput_vs_Frequency_All_7_Schemes.png');
+
+    %=========================================================
+    % PLOT 3: GOODPUT VS NOISE VARIANCE 
+    %=========================================================
+
+    figure('Name', 'Goodput vs Noise Variance - All Schemes', ...
+        'Color', 'w');
+
+    hold on;
+
+    for m = 1:7
+
+        semilogx(noiseVarValues, ALL_GOODPUT_NOISE(m,:), ...
+            'LineStyle', '-', ...
+            'Marker', allMarkers{m}, ...
+            'Color', allColors{m}, ...
+            'LineWidth', 1.5, ...
+            'MarkerSize', 5);
+
+    end
+
+    hold off;
+    grid on;
+
+    set(gca, 'XScale', 'log');
+
+    xlabel('Noise Variance');
+    ylabel('Goodput');
+    title('Goodput vs Noise Variance - Fixed and Adaptive Modulation');
+
+    legend(allSchemes, 'Location', 'best');
+
+    ylim([0 1]);
+    xlim([min(noiseVarValues) max(noiseVarValues)]);
+
+    subtitle(sprintf(['Fixed ACI power = %.2f | ' ...
+        'Fixed frequency separation = %.1f MHz'], ...
+        baseACIpower, baseFreqSeparation/1e6));
+
+    saveas(gcf, 'Exp3_Goodput_vs_Noise_All_7_Schemes.png');
+
+    %=========================================================
+    % PLOT 4: ADAPTIVE MODULATION VS BLOCK NUMBER
+    %=========================================================
+
+    figure('Name', 'Adaptive Modulation Scheme Variation', ...
+        'Color', 'w');
+
+    for a = 1:numAdaptive
+
+        subplot(3,1,a);
+
+        stairs(1:numBlocks, SCHEME_HISTORY(a,:), ...
+            'LineWidth', 1.5);
+
+        grid on;
+
+        xlabel('Block Number');
+        ylabel('Selected Scheme');
+
+        yticks(1:4);
+        yticklabels({'BPSK', 'QPSK', '16-QAM', '64-QAM'});
+
+        ylim([0.8 4.2]);
+        xlim([1 numBlocks]);
+
+        title(sprintf('%s Modulation Adaptation', ...
+            adaptiveSchemes{a}));
+
+    end
+
+    sgtitle(sprintf(['Modulation Scheme Variation | ' ...
+        'ACI Power = %.2f | Frequency Separation = %.1f MHz | ' ...
+        'Noise Variance = %.2e'], ...
+        baseACIpower, baseFreqSeparation/1e6, baseNoiseVar));
+
+    saveas(gcf, 'Adaptive_Modulation_Scheme_Variation.png');
+
+    fprintf('\n============================================\n');
+    fprintf('           SIMULATION COMPLETED\n');
+    fprintf('============================================\n');
+
+    fprintf('Three goodput plots and one modulation-history figure generated.\n');
+
+    fprintf('\nGoodput = Correctly received bits / Total transmitted bits\n');
+
+    fprintf('\nFixed modulation schemes:\n');
+
+    for m = 1:numSchemes
+        fprintf('  %s\n', modulationSchemes{m});
+    end
+
+    fprintf('\nAdaptive modulation algorithms:\n');
+
+    for a = 1:numAdaptive
+        fprintf('  %s\n', adaptiveSchemes{a});
+    end
+
+    fprintf('\nBaseline values:\n');
+    fprintf('ACI Power            = %.2f\n', baseACIpower);
+    fprintf('Frequency Separation = %.1f MHz\n', ...
+        baseFreqSeparation/1e6);
+    fprintf('Noise Variance       = %.2e\n', baseNoiseVar);
+
+    fprintf('\nBlocks per operating condition = %d\n', numBlocks);
+
+end
+
+
+%% =========================================================
+%           SIMULATE ONE FIXED-MODULATION CONDITION
+% ==========================================================
+
+function [goodput, totalACK, totalNACK] = simulateFixedCondition( ...
+    modScheme, numBlocks, numSymbols, ...
+    max_power, freq_separation, noiseVar, ...
+    Fs, sps, span, hRRC, ...
+    ampGain_Tx, ampGain_Rx_linear, ...
+    ampGain_Rx_non_linear, a1, channelGain)
+
+    totalACK = 0;
+    totalNACK = 0;
+
+    totalCorrectBits = 0;
+    totalBits = 0;
+
+    current_time = 0;
+
+    for b = 1:numBlocks
+
+        [numErrors, correctlyReceivedBits, transmittedBits, current_time] = ...
+            simulateOneBlock(modScheme, numSymbols, ...
+            max_power, freq_separation, noiseVar, ...
+            Fs, sps, span, hRRC, ...
+            ampGain_Tx, ampGain_Rx_linear, ...
+            ampGain_Rx_non_linear, a1, channelGain, current_time);
+
+        totalCorrectBits = totalCorrectBits + correctlyReceivedBits;
+        totalBits = totalBits + transmittedBits;
+
+        if numErrors == 0
+            totalACK = totalACK + 1;
+        else
+            totalNACK = totalNACK + 1;
+        end
+
+    end
+
+    goodput = totalCorrectBits / totalBits;
+
+end
+
+
+
+%% =========================================================
+%          SIMULATE ONE ADAPTIVE-MODULATION CONDITION
+% ==========================================================
+
+function [goodput, schemeHistory] = simulateAdaptiveCondition( ...
+    algorithm, numBlocks, numSymbols, ...
+    max_power, freq_separation, noiseVar, ...
+    Fs, sps, span, hRRC, ...
+    ampGain_Tx, ampGain_Rx_linear, ...
+    ampGain_Rx_non_linear, a1, channelGain)
+
+    modulationSchemes = {'BPSK', 'QPSK', '16-QAM', '64-QAM'};
+
+    numLevels = length(modulationSchemes);
+
+    % Start with the most conservative modulation for
+    % Immediate and History algorithms.
+    currentIdx = 1;
+
+    % Updated Q-learning starts with 64-QAM,
+    % as in the adaptive_controller you provided.
+    if strcmpi(algorithm, 'Q-learning')
+        currentIdx = 4;
+    end
+
+    rates = [1 2 4 6];
+
+    totalCorrectBits = 0;
+    totalBits = 0;
+
+    current_time = 0;
+
+    % Record the modulation selected in each block
+    schemeHistory = zeros(1, numBlocks);
+
+    %---------------------------------------------------------
+    % History algorithm memory
+    %---------------------------------------------------------
+
+    ackHistory = [];
+
+    %---------------------------------------------------------
+    % UPDATED Q-LEARNING PARAMETERS
+    %---------------------------------------------------------
+
+    qGamma    = 0.60;
+    qAlphaMin = 0.10;
+    qEps0     = 0.15;
+    qEpsMin   = 0.02;
+    qEpsDecay = 0.99;
+    qMaxSince = 3;
+
+    % State:
+    % Number of blocks since last NACK (0 to 3),
+    % and modulation used in the previous block (1 to 4).
+    %
+    % Total states = 4 * (3 + 1) = 16.
+    %
+    % Actions:
+    % 1 = BPSK
+    % 2 = QPSK
+    % 3 = 16-QAM
+    % 4 = 64-QAM
+
+    qTable = zeros(4*(qMaxSince+1), numLevels);
+
+    % Optimistic initialization
+    for a = 1:numLevels
+        qTable(:,a) = rates(a)/(1-qGamma);
+    end
+
+    qCount = zeros(size(qTable));
+
+    qSince = qMaxSince;
+    qPrevState = qMaxSince*4 + 4;
+
+    %---------------------------------------------------------
+    % MAIN BLOCK LOOP
+    %---------------------------------------------------------
+
+    for b = 1:numBlocks
+
+        %-----------------------------------------------------
+        % 1. SELECT MODULATION FOR CURRENT BLOCK
+        %-----------------------------------------------------
+
+        schemeHistory(b) = currentIdx;
+
+        modScheme = modulationSchemes{currentIdx};
+
+        usedIdx = currentIdx;
+
+        %-----------------------------------------------------
+        % 2. TRANSMIT AND RECEIVE ONE BLOCK
+        %-----------------------------------------------------
+
+        [numErrors, correctlyReceivedBits, transmittedBits, current_time] = ...
+            simulateOneBlock(modScheme, numSymbols, ...
+            max_power, freq_separation, noiseVar, ...
+            Fs, sps, span, hRRC, ...
+            ampGain_Tx, ampGain_Rx_linear, ...
+            ampGain_Rx_non_linear, a1, channelGain, current_time);
+
+        totalCorrectBits = totalCorrectBits + correctlyReceivedBits;
+        totalBits = totalBits + transmittedBits;
+
+        % ACK if the entire block is received without errors
+        isACK = (numErrors == 0);
+
+        %-----------------------------------------------------
+        % 3. IMMEDIATE ALGORITHM
+        %-----------------------------------------------------
+
+        if strcmpi(algorithm, 'Immediate')
+
+            if isACK
+                currentIdx = min(usedIdx + 1, numLevels);
+            else
+                currentIdx = max(usedIdx - 1, 1);
+            end
+
+        %-----------------------------------------------------
+        % 4. HISTORY ALGORITHM
+        %-----------------------------------------------------
+
+        elseif strcmpi(algorithm, 'History')
+
+            ackHistory = [ackHistory, isACK];
+
+            % Keep only the most recent five outcomes
+            if length(ackHistory) > 5
+                ackHistory = ackHistory(end-4:end);
+            end
+
+            % Make a decision only after five observations
+            if length(ackHistory) == 5
+
+                recentACKrate = mean(ackHistory);
+
+                if recentACKrate >= 0.8
+
+                    currentIdx = min(usedIdx + 1, numLevels);
+
+                elseif recentACKrate <= 0.4
+
+                    currentIdx = max(usedIdx - 1, 1);
+
+                else
+
+                    currentIdx = usedIdx;
+
+                end
+
+            end
+
+        %-----------------------------------------------------
+        % 5. Q-LEARNING ALGORITHM
+        %-----------------------------------------------------
+
+        elseif strcmpi(algorithm, 'Q-learning')
+
+            % Update the blocks-since-last-NACK counter
+            if ~isACK
+                qSince = 0;
+            else
+                qSince = min(qSince + 1, qMaxSince);
+            end
+
+            % Next state:
+            % (blocks since last NACK, modulation just used)
+            nextState = qSince*4 + usedIdx;
+
+            % Reward = delivered payload bits per symbol
+            reward = rates(usedIdx) * isACK;
+
+            % Update visit count
+            qCount(qPrevState, usedIdx) = ...
+                qCount(qPrevState, usedIdx) + 1;
+
+            % Count-based learning rate
+            alphaQ = max(qAlphaMin, ...
+                1/(1 + qCount(qPrevState, usedIdx)));
+
+            % Q-learning update
+            target = reward + qGamma * max(qTable(nextState,:));
+
+            qTable(qPrevState, usedIdx) = ...
+                qTable(qPrevState, usedIdx) + ...
+                alphaQ * (target - qTable(qPrevState, usedIdx));
+
+            % Decaying epsilon-greedy action selection
+            qEps = max(qEpsMin, qEps0 * qEpsDecay^b);
+
+            if rand < qEps
+
+                % Exploration
+                currentIdx = randi(numLevels);
+
+            else
+
+                % Exploitation: choose among maximum-Q actions
+                qValues = qTable(nextState,:);
+
+                bestActions = find(qValues >= ...
+                    max(qValues) - 1e-9);
+
+                currentIdx = bestActions( ...
+                    randi(numel(bestActions)));
+
+            end
+
+            % Store state for the next Q-learning update
+            qPrevState = nextState;
+
+        end
+
+    end
+
+    %---------------------------------------------------------
+    % FINAL GOODPUT
+    %---------------------------------------------------------
+
+    goodput = totalCorrectBits / totalBits;
+
+end
+
+%% =========================================================
+%                 SIMULATE ONE TRANSMITTED BLOCK
+% ==========================================================
+
+function [numErrors, correctlyReceivedBits, transmittedBits, current_time] = ...
+    simulateOneBlock(modScheme, numSymbols, ...
+    max_power, freq_separation, noiseVar, ...
+    Fs, sps, span, hRRC, ...
+    ampGain_Tx, ampGain_Rx_linear, ...
+    ampGain_Rx_non_linear, a1, channelGain, current_time)
+
+    %---------------------------------------------------------
+    % 1. SELECT DESIRED MODULATION
+    %---------------------------------------------------------
+
+    switch modScheme
+
+        case 'BPSK'
+            M = 2;
+
+        case 'QPSK'
+            M = 4;
+
+        case '16-QAM'
+            M = 16;
+
+        case '64-QAM'
+            M = 64;
+
+        otherwise
+            error('Unknown modulation scheme: %s', modScheme);
+
+    end
+
+    k = log2(M);
+    blockSize = numSymbols * k;
+
+    %---------------------------------------------------------
+    % 2. TRANSMITTER
+    %---------------------------------------------------------
+
+    txBits = randi([0 1], blockSize, 1);
+
+    txSyms = encoder(txBits, modScheme, M);
+
+    txWaveform = upfirdn(txSyms, hRRC, sps);
+    txWaveform = txWaveform(:);
+
+    txBB = txWaveform;
+
+    desiredPower = mean(abs(txBB).^2);
+
+    interferencePower = max_power * desiredPower;
+
+    %---------------------------------------------------------
+    % 3. RANDOM ACI MODULATION
+    %---------------------------------------------------------
+
+    aciSchemes = {'BPSK', 'QPSK', '16-QAM', '64-QAM'};
+
+    aciModIdx = randi(numel(aciSchemes));
+    aciModScheme = aciSchemes{aciModIdx};
+
+    switch aciModScheme
+
+        case 'BPSK'
+            Maci = 2;
+
+        case 'QPSK'
+            Maci = 4;
+
+        case '16-QAM'
+            Maci = 16;
+
+        case '64-QAM'
+            Maci = 64;
+
+    end
+
+    kAci = log2(Maci);
+    aciBlockSize = numSymbols * kAci;
+
+    aci_bits = randi([0 1], aciBlockSize, 1);
+
+    aci_syms = encoder(aci_bits, aciModScheme, Maci);
+
+    aci_waveform = upfirdn(aci_syms, hRRC, sps);
+    aci_waveform = aci_waveform(:);
+
+    L = min(length(txBB), length(aci_waveform));
+
+    txBB = txBB(1:L);
+    aci_waveform = aci_waveform(1:L);
+
+    %---------------------------------------------------------
+    % 4. CONTINUOUS TIME TRACKING
+    %---------------------------------------------------------
+
+    t = current_time + (0:L-1)' / Fs;
+
+    current_time = current_time + L / Fs;
+
+    %---------------------------------------------------------
+    % 5. FREQUENCY-SHIFTED ACI
+    %---------------------------------------------------------
+
+    aci_BB_raw = aci_waveform .* ...
+        exp(1j * 2 * pi * freq_separation * t);
+
+    rawAciPower = mean(abs(aci_BB_raw).^2);
+
+    aci_BB = sqrt(interferencePower / max(rawAciPower, eps)) ...
+        .* aci_BB_raw;
+
+    % ACI is active in every block
+    txBB = txBB + aci_BB;
+
+    %---------------------------------------------------------
+    % 6. TX AMPLIFIER
+    %---------------------------------------------------------
+
+    txAmp = txBB * ampGain_Tx;
+
+    %---------------------------------------------------------
+    % 7. AWGN CHANNEL
+    %---------------------------------------------------------
+
+    noise = sqrt(noiseVar/2) * ...
+        (randn(size(txAmp)) + 1j*randn(size(txAmp)));
+
+    rxWaveform = channelGain * txAmp + noise;
+
+    %---------------------------------------------------------
+    % 8. LINEAR RX AMPLIFIER
+    %---------------------------------------------------------
+
+    rxAmp = rxWaveform * ampGain_Rx_linear;
+
+    %---------------------------------------------------------
+    % 9. NONLINEAR RX AMPLIFIER
+    %---------------------------------------------------------
+
+    rxNL = a1 * rxAmp + ...
+        ampGain_Rx_non_linear * (abs(rxAmp).^2) .* rxAmp;
+
+    rxWaveform = rxNL;
+
+    %---------------------------------------------------------
+    % 10. RECEIVER RRC FILTER
+    %---------------------------------------------------------
+
+    rxFiltered = upfirdn(rxWaveform, hRRC, 1, sps);
+
+    rxSyms = rxFiltered(span + 1 : span + numSymbols);
+
+    %---------------------------------------------------------
+    % 11. DEMODULATION AND ERROR COUNT
+    %---------------------------------------------------------
+
+    rxBits = decoder(rxSyms, modScheme, M);
+
+    numErrors = sum(txBits ~= rxBits);
+
+    %---------------------------------------------------------
+    % 12. GOODPUT VARIABLES
+    %---------------------------------------------------------
+
+    transmittedBits = length(txBits);
+
+    correctlyReceivedBits = transmittedBits - numErrors;
+
+end
+
+
+%% =========================================================
+%                         ENCODER
+% ==========================================================
+
+function syms = encoder(bits, modScheme, M)
+
+    k = log2(M);
+
+    bitMatrix = reshape(bits, k, [])';
+
+    intData = bi2de(bitMatrix, 'left-msb');
+
+    switch modScheme
+
+        case 'BPSK'
+            syms = pskmod(intData, 2);
+
+        case 'QPSK'
+            syms = pskmod(intData, 4, pi/4);
+
+        otherwise
+            syms = qammod(intData, M, ...
+                'UnitAveragePower', true);
+
+    end
+
+end
+
+
+%% =========================================================
+%                         DECODER
+% ==========================================================
+
+function bits = decoder(syms, modScheme, M)
+
+    switch modScheme
+
+        case 'BPSK'
+            rxInt = pskdemod(syms, 2);
+
+        case 'QPSK'
+            rxInt = pskdemod(syms, 4, pi/4);
+
+        otherwise
+            rxInt = qamdemod(syms, M, ...
+                'UnitAveragePower', true);
+
+    end
+
+    k = log2(M);
+
+    bitMatrix = de2bi(rxInt, k, 'left-msb');
+
+    bits = reshape(bitMatrix', [], 1);
+
+end
+
